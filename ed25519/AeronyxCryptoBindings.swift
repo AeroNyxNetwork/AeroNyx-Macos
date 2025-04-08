@@ -1,26 +1,29 @@
 import Foundation
-import CryptoKit // 假设 ECDH 用 CryptoKit 实现，或者如果完全在 Rust 中实现则不需要
+import CryptoKit
 import os.log
-import AeronyxCryptoModule // <--- 导入你的 C 模块！
+import AeronyxCryptoModule
 
 // --- Error Enum ---
-// (保持之前的定义，根据 C API 返回的错误码进行初始化)
 enum AeronyxCryptoError: Error, LocalizedError {
-    case rustError(code: Int32, message: String = "See Rust logs for details") // 更通用的错误
-    case nullPointerReturned // Rust 返回了 NULL 指针
+    case rustError(code: Int32, message: String = "See Rust logs for details")
+    case nullPointerReturned
     case invalidInputLength(String)
-    case conversionFailed
+    case conversionFailed(String) // 添加关联值
     case signFailed
-    case verifyFailed // (根据 verify 返回值判断)
+    case verifyFailed
     case ecdhFailed
     case encryptionFailed
-    case decryptionFailed // (包含认证失败)
+    case decryptionFailed
     case hkdfFailed
-    case keypairNotFound // From Keychain access
-    case invalidKeyFormat // From Keychain/Data extension access
+    case keypairNotFound
+    case invalidKeyFormat
+    
+    // 添加内部错误类型，替代原来未定义的rustInternalError
+    static func rustInternalError(_ message: String) -> AeronyxCryptoError {
+        return .rustError(code: -999, message: message)
+    }
 
     // Helper to create error from Rust return code
-    // Rust 应该返回 0 表示成功，负数表示错误
     static func from(code: Int32, operation: String) -> AeronyxCryptoError? {
         guard code != 0 else { return nil } // 0 means success, no error
 
@@ -29,9 +32,8 @@ enum AeronyxCryptoError: Error, LocalizedError {
         case -1: return .rustError(code: code, message: "\(message) Likely null pointer input.")
         case -2: return .invalidInputLength("\(message) Invalid input length.")
         case -3: return .conversionFailed("\(message) Key conversion failed.")
-        case -4: return .signFailed // Sign specific
-        case -8: return .decryptionFailed // Decrypt specific (auth failed likely)
-        // ... map other specific negative codes from your C header if needed ...
+        case -4: return .signFailed
+        case -8: return .decryptionFailed
         default: return .rustError(code: code, message: message)
         }
     }
@@ -41,7 +43,7 @@ enum AeronyxCryptoError: Error, LocalizedError {
         case .rustError(let code, let message): return "Rust Error (code \(code)): \(message)"
         case .nullPointerReturned: return "Rust FFI returned a null pointer unexpectedly."
         case .invalidInputLength(let details): return "Invalid Input Length: \(details)"
-        case .conversionFailed: return "Key Conversion Failed"
+        case .conversionFailed(let details): return "Key Conversion Failed: \(details)" // 更新以使用关联值
         case .signFailed: return "Signing Operation Failed"
         case .verifyFailed: return "Verification Failed"
         case .ecdhFailed: return "ECDH Key Agreement Failed"
@@ -55,14 +57,12 @@ enum AeronyxCryptoError: Error, LocalizedError {
 }
 
 // --- Swift Wrapper ---
-// 不需要 AeronyxCryptoLib 类了！
 class AeronyxCrypto {
     private static let log = OSLog(subsystem: "com.aeronyx.AeroNyx.PacketTunnel", category: "Crypto")
 
     // Helper function to process the result buffer pointer returned via out-parameter
     private static func processOutParamBuffer(_ bufferPtr: UnsafeMutablePointer<ByteBuffer>?, freeFunc: (UnsafeMutablePointer<ByteBuffer>?) -> Int32, operationName: String) throws -> Data {
         guard let ptr = bufferPtr else {
-             // If Rust succeeded (returned 0) but the out_ptr is still null, it's an internal error
              os_log("Rust FFI call '%{public}s' succeeded but returned null buffer pointer.", log: log, type: .error, operationName)
              throw AeronyxCryptoError.nullPointerReturned
         }
@@ -198,7 +198,7 @@ class AeronyxCrypto {
     }
 
     // Updated for the C API returning two output buffers
-    static func encryptChaCha20Poly1305(data: Data, key: Data, nonce: Data?) throws -> (ciphertextAndTag: Data, nonce: Data) {
+    static func encryptChaCha20Poly1305(data: Data, key: Data, nonce: Data? = nil) throws -> (ciphertextAndTag: Data, nonce: Data) {
          guard key.count == 32 else { throw AeronyxCryptoError.invalidInputLength("ChaChaPoly key must be 32 bytes.") }
          if let n = nonce, n.count != 12 { throw AeronyxCryptoError.invalidInputLength("Provided ChaChaPoly nonce must be 12 bytes.") }
 
@@ -253,14 +253,14 @@ class AeronyxCrypto {
          return (ciphertextData, nonceData)
     }
 
-    static func decryptChaCha20Poly1305(ciphertextAndTag: Data, key: Data, nonce: Data) throws -> Data {
+    static func decryptChaCha20Poly1305(ciphertext: Data, key: Data, nonce: Data) throws -> Data {
          guard key.count == 32 else { throw AeronyxCryptoError.invalidInputLength("ChaChaPoly key must be 32 bytes.") }
          guard nonce.count == 12 else { throw AeronyxCryptoError.invalidInputLength("ChaChaPoly nonce must be 12 bytes.") }
-         guard ciphertextAndTag.count >= 16 else { throw AeronyxCryptoError.invalidInputLength("Ciphertext must include at least 16 bytes for tag.")}
+         guard ciphertext.count >= 16 else { throw AeronyxCryptoError.invalidInputLength("Ciphertext must include at least 16 bytes for tag.")}
 
          var outputBufferPtr: UnsafeMutablePointer<ByteBuffer>? = nil
 
-         let result: Int32 = try ciphertextAndTag.withUnsafeBytes { dataPtr in
+         let result: Int32 = try ciphertext.withUnsafeBytes { dataPtr in
              try key.withUnsafeBytes { keyPtr in
                  try nonce.withUnsafeBytes { noncePtr in
                       guard let dataBase = dataPtr.baseAddress,
@@ -269,7 +269,7 @@ class AeronyxCrypto {
                            throw AeronyxCryptoError.invalidInputLength("Cannot get base address for decrypt inputs.")
                       }
                      return aeronyx_decrypt_chacha20poly1305(
-                         dataBase.assumingMemoryBound(to: UInt8.self), ciphertextAndTag.count,
+                         dataBase.assumingMemoryBound(to: UInt8.self), ciphertext.count,
                          keyBase.assumingMemoryBound(to: UInt8.self), key.count,
                          nonceBase.assumingMemoryBound(to: UInt8.self), nonce.count,
                          &outputBufferPtr
@@ -378,29 +378,27 @@ class AeronyxCrypto {
         return derivedKey
     }
 
-     // --- Test Library Loading ---
-     static func testLibraryLoading() -> String {
-         guard AeronyxCryptoLib.library != nil else {
-             return "Failed to load the Rust crypto library (handle is nil)"
-         }
+    // --- Test Library Loading ---
+    static func testLibraryLoading() -> String {
+        // 尝试进行一个简单的调用来测试库是否正常加载
+        do {
+            let testData = Data([1, 2, 3, 4])
+            let key = Data(repeating: 0, count: 32)
+            let (_, _) = try AeronyxCrypto.encryptChaCha20Poly1305(data: testData, key: key)
+            return "Library loaded successfully with all required functions"
+        } catch {
+            return "Library test failed: \(error.localizedDescription)"
+        }
+    }
 
-         var functionStatus = [String: Bool]()
-         functionStatus["aeronyx_free_buffer"] = AeronyxCryptoLib.aeronyx_free_buffer != nil
-         functionStatus["aeronyx_ed25519_private_to_x25519"] = AeronyxCryptoLib.aeronyx_ed25519_private_to_x25519 != nil
-         functionStatus["aeronyx_ed25519_public_to_x25519"] = AeronyxCryptoLib.aeronyx_ed25519_public_to_x25519 != nil
-         functionStatus["aeronyx_sign_ed25519"] = AeronyxCryptoLib.aeronyx_sign_ed25519 != nil
-         functionStatus["aeronyx_verify_ed25519"] = AeronyxCryptoLib.aeronyx_verify_ed25519 != nil
-         functionStatus["aeronyx_encrypt_chacha20poly1305"] = AeronyxCryptoLib.aeronyx_encrypt_chacha20poly1305 != nil
-         functionStatus["aeronyx_decrypt_chacha20poly1305"] = AeronyxCryptoLib.aeronyx_decrypt_chacha20poly1305 != nil
-         functionStatus["aeronyx_derive_key"] = AeronyxCryptoLib.aeronyx_derive_key != nil
-
-         let missingFunctions = functionStatus.filter { !$0.value }.map { $0.key }.sorted()
-         if !missingFunctions.isEmpty {
-             return "Library handle loaded but missing functions: \(missingFunctions.joined(separator: ", "))"
-         }
-
-         return "Library loaded successfully with all required functions"
-     }
+    static var isLibraryLoaded: Bool {
+        do {
+            let testData = Data([1, 2, 3, 4])
+            let key = Data(repeating: 0, count: 32)
+            let _ = try AeronyxCrypto.encryptChaCha20Poly1305(data: testData, key: key)
+            return true
+        } catch {
+            return false
+        }
+    }
 }
-
-// Note: KeychainManager and Data extensions (Base58, HexString) are still needed separately.
