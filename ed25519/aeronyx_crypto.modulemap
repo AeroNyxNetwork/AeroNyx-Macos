@@ -1,0 +1,5 @@
+
+module AeronyxCrypto {
+    header "AeronyxCrypto.h"
+    export *
+}

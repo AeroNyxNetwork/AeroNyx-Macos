@@ -1,0 +1,16 @@
+[package]
+name = "aeronyx_crypto"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "aeronyx_crypto"
+crate-type = ["cdylib"]
+
+[dependencies]
+chacha20poly1305 = "0.9.0"
+curve25519-dalek = "3.2.0"
+ed25519-dalek = "1.0.1"
+hkdf = "0.12.0"
+rand = "0.8.5"
+sha2 = "0.10.1"
