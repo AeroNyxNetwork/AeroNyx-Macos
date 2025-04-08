@@ -1,7 +1,7 @@
 import Foundation
 import CryptoKit
 import os.log
-import AeronyxCrypto // Direct import of the C module instead of using dlopen/dlsym
+import AeronyxCryptoModule // Direct import of the C module instead of using dlopen/dlsym
 
 // --- Error Enum ---
 enum AeronyxCryptoError: Error, LocalizedError {
