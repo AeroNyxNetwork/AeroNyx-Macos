@@ -4,12 +4,15 @@ use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use chacha20poly1305::aead::{Aead, NewAead};
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Keypair, PublicKey, SecretKey, Signature};
+use ed25519_dalek::Signer;  // 添加这个Trait
+use ed25519_dalek::Verifier; // 添加这个Trait
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
+use rand::RngCore;  // 添加这个Trait
 use sha2::{Digest, Sha256, Sha512};
 use std::slice;
 use std::ptr;
-use std::os::raw::{c_char, c_uchar, c_int, c_ulong};
+use std::os::raw::c_int;  // 只保留需要的类型
 
 // Error codes
 const AERONYX_SUCCESS: c_int = 0;
