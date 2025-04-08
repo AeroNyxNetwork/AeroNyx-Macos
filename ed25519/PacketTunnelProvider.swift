@@ -2,9 +2,8 @@ import NetworkExtension
 import os.log
 import Foundation
 
-// MARK: - 协议数据包结构
 
-/// 协议数据包类型
+/// Protocol packet types
 enum PacketType: String, Codable {
     case auth = "Auth"
     case challenge = "Challenge"
@@ -17,12 +16,12 @@ enum PacketType: String, Codable {
     case disconnect = "Disconnect"
 }
 
-/// 基础数据包结构
+/// Base packet structure
 struct BasePacket: Codable {
     let type: PacketType
 }
 
-/// 认证数据包
+/// Authentication packet
 struct AuthPacket: Codable {
     let type = PacketType.auth
     let publicKey: String
@@ -30,52 +29,52 @@ struct AuthPacket: Codable {
     let platform: String
 }
 
-/// 挑战数据包
+/// Challenge packet
 struct ChallengePacket: Codable {
     let type = PacketType.challenge
-    let data: String  // Base64编码的挑战数据
-    let serverKey: String  // 服务器Ed25519公钥(Base58编码)
-    let id: String  // 挑战ID
-    let expiresAt: Int64  // 过期时间戳
+    let data: String  // Base64 encoded challenge data
+    let serverKey: String  // Server Ed25519 public key (Base58 encoded)
+    let id: String  // Challenge ID
+    let expiresAt: Int64  // Expiration timestamp
 }
 
-/// 挑战响应数据包
+/// Challenge response packet
 struct ChallengeResponsePacket: Codable {
     let type = PacketType.challengeResponse
-    let signature: String  // Base58编码的签名
-    let publicKey: String  // 客户端公钥(Base58编码)
-    let challengeId: String  // 挑战ID
+    let signature: String  // Base58 encoded signature
+    let publicKey: String  // Client public key (Base58 encoded)
+    let challengeId: String  // Challenge ID
 }
 
-/// IP分配数据包
+/// IP assignment packet
 struct IpAssignPacket: Codable {
     let type = PacketType.ipAssign
-    let ipAddress: String  // 分配的IP地址
-    let subnetMask: String  // 子网掩码
-    let gateway: String  // 网关地址
-    let dns: [String]  // DNS服务器地址
-    let encryptedSessionKey: String  // Base64编码的加密会话密钥
-    let keyNonce: String  // Base64编码的会话密钥nonce
-    let sessionId: String  // 会话ID
-    let leaseDuration: Int64  // 租约时长(秒)
+    let ipAddress: String  // Assigned IP address
+    let subnetMask: String  // Subnet mask
+    let gateway: String  // Gateway address
+    let dns: [String]  // DNS server addresses
+    let encryptedSessionKey: String  // Base64 encoded encrypted session key
+    let keyNonce: String  // Base64 encoded session key nonce
+    let sessionId: String  // Session ID
+    let leaseDuration: Int64  // Lease duration (seconds)
 }
 
-/// 数据包
+/// Data packet
 struct DataPacket: Codable {
     let type = PacketType.data
-    let encrypted: String  // Base64编码的加密数据
-    let nonce: String  // Base64编码的nonce
-    let counter: Int64  // 数据包计数器
+    let encrypted: String  // Base64 encoded encrypted data
+    let nonce: String  // Base64 encoded nonce
+    let counter: Int64  // Packet counter
 }
 
-/// 错误数据包
+/// Error packet
 struct ErrorPacket: Codable {
     let type = PacketType.error
     let code: Int
     let message: String
 }
 
-/// 断开连接数据包
+/// Disconnect packet
 struct DisconnectPacket: Codable {
     let type = PacketType.disconnect
     let reason: String
@@ -94,15 +93,15 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private var serverPublicKey: Data?
     private var sessionId: String?
     
-    // MARK: - 会话生命周期
+    // MARK: - Session Lifecycle
     
     override func startTunnel(options: [String : NSObject]?, completionHandler: @escaping (Error?) -> Void) {
         os_log("Starting tunnel...", log: log, type: .info)
         
-        // 初始化加密管理器
+        // Initialize crypto manager
         cryptoManager = CryptoManager()
         
-        // 开始与服务器握手
+        // Start server handshake
         startServerHandshake { [weak self] error in
             guard let self = self else { return }
             
@@ -121,11 +120,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         os_log("Stopping tunnel with reason: %{public}d", log: log, type: .info, reason.rawValue)
         
-        // 发送断开连接消息
+        // Send disconnect message
         if let webSocketTask = webSocketTask, sessionId != nil {
             let disconnectPacket = DisconnectPacket(reason: "Client initiated disconnect")
             sendJsonPacket(disconnectPacket) { _ in
-                // 无论发送成功与否都继续清理
+                // Continue cleanup regardless of send success
                 self.cleanupResources()
                 completionHandler()
             }
@@ -136,14 +135,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
     
     private func cleanupResources() {
-        // 停止数据包处理
+        // Stop packet processing
         isProcessingPackets = false
         
-        // 关闭WebSocket连接
+        // Close WebSocket connection
         webSocketTask?.cancel()
         webSocketTask = nil
         
-        // 清理资源
+        // Clean up resources
         sessionKey = nil
         serverPublicKey = nil
         sessionId = nil
@@ -151,10 +150,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         reconnectAttempts = 0
     }
     
-    // MARK: - 服务器握手
+    // MARK: - Server Handshake
     
     private func startServerHandshake(completion: @escaping (Error?) -> Void) {
-        // 1. 连接到服务器
+        // 1. Connect to server
         guard let url = URL(string: "wss://your-vpn-server.com/connect") else {
             completion(NSError(domain: "com.aeronyx.AeroNyx", code: 1000, userInfo: [NSLocalizedDescriptionKey: "Invalid server URL"]))
             return
@@ -165,7 +164,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         
-        // 加载密钥对
+        // Load keypair
         let keypair: (privateKey: Data, publicKey: Data, publicKeyString: String)
         do {
             keypair = try crypto.loadKeypair()
@@ -175,12 +174,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
         
-        // 创建WebSocket连接
+        // Create WebSocket connection
         let session = URLSession(configuration: .default)
         webSocketTask = session.webSocketTask(with: url)
         webSocketTask?.resume()
         
-        // 2. 发送Auth包
+        // 2. Send Auth packet
         let authPacket = AuthPacket(
             publicKey: keypair.publicKeyString,
             clientVersion: "1.0.0",
@@ -196,18 +195,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
             
-            // 3. 接收Challenge包
+            // 3. Receive Challenge packet
             self.receiveJsonPacket { result in
                 switch result {
                 case .success(let packetData):
                     do {
-                        // 解析为基础数据包以获取类型
+                        // Parse as base packet to get type
                         let decoder = JSONDecoder()
                         let basePacket = try decoder.decode(BasePacket.self, from: packetData)
                         
                         switch basePacket.type {
                         case .challenge:
-                            // 解析为完整挑战包
+                            // Parse as full challenge packet
                             let challengePacket = try decoder.decode(ChallengePacket.self, from: packetData)
                             self.handleChallenge(challengePacket, privateKey: keypair.privateKey, completion: completion)
                         case .error:
@@ -215,7 +214,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                             let error = NSError(domain: "com.aeronyx.AeroNyx", code: errorPacket.code, userInfo: [NSLocalizedDescriptionKey: errorPacket.message])
                             completion(error)
                         default:
-                            let error = NSError(domain: "com.aeronyx.AeroNyx", code: 1002, userInfo: [NSLocalizedDescriptionKey: "Expected Challenge packet, got \(basePacket.type.rawValue)"]])
+                            let error = NSError(domain: "com.aeronyx.AeroNyx", code: 1002, userInfo: [NSLocalizedDescriptionKey: "Expected Challenge packet, got \(basePacket.type.rawValue)"])
                             completion(error)
                         }
                     } catch {
@@ -237,23 +236,23 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         
         do {
-            // 1. 解码Base64挑战数据
+            // 1. Decode Base64 challenge data
             guard let challengeData = Data(base64Encoded: challengePacket.data) else {
-                throw NSError(domain: "com.aeronyx.AeroNyx", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Invalid challenge data format"]])
+                throw NSError(domain: "com.aeronyx.AeroNyx", code: 1004, userInfo: [NSLocalizedDescriptionKey: "Invalid challenge data format"])
             }
             
-            // 2. 解码Base58服务器公钥
+            // 2. Decode Base58 server public key
             guard let serverPublicKeyData = Data(base58Encoded: challengePacket.serverKey) else {
-                throw NSError(domain: "com.aeronyx.AeroNyx", code: 1005, userInfo: [NSLocalizedDescriptionKey: "Invalid server key format"]])
+                throw NSError(domain: "com.aeronyx.AeroNyx", code: 1005, userInfo: [NSLocalizedDescriptionKey: "Invalid server key format"])
             }
             
-            // 保存服务器公钥用于后续密钥派生
+            // Save server public key for later key derivation
             self.serverPublicKey = serverPublicKeyData
             
-            // 3. 签名挑战数据
+            // 3. Sign challenge data
             let signature = try crypto.sign(challenge: challengeData)
             
-            // 4. 构造并发送ChallengeResponse包
+            // 4. Construct and send ChallengeResponse packet
             let keypair = try crypto.loadKeypair()
             let responsePacket = ChallengeResponsePacket(
                 signature: signature,
@@ -270,18 +269,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     return
                 }
                 
-                // 5. 接收IpAssign包
+                // 5. Receive IpAssign packet
                 self.receiveJsonPacket { result in
                     switch result {
                     case .success(let packetData):
                         do {
-                            // 解析为基础数据包以获取类型
+                            // Parse as base packet to get type
                             let decoder = JSONDecoder()
                             let basePacket = try decoder.decode(BasePacket.self, from: packetData)
                             
                             switch basePacket.type {
                             case .ipAssign:
-                                // 解析为完整IP分配包
+                                // Parse as full IP assign packet
                                 let ipAssignPacket = try decoder.decode(IpAssignPacket.self, from: packetData)
                                 self.handleIpAssign(ipAssignPacket, completion: completion)
                             case .error:
@@ -289,7 +288,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                                 let error = NSError(domain: "com.aeronyx.AeroNyx", code: errorPacket.code, userInfo: [NSLocalizedDescriptionKey: errorPacket.message])
                                 completion(error)
                             default:
-                                let error = NSError(domain: "com.aeronyx.AeroNyx", code: 1006, userInfo: [NSLocalizedDescriptionKey: "Expected IpAssign packet, got \(basePacket.type.rawValue)"]])
+                                let error = NSError(domain: "com.aeronyx.AeroNyx", code: 1006, userInfo: [NSLocalizedDescriptionKey: "Expected IpAssign packet, got \(basePacket.type.rawValue)"])
                                 completion(error)
                             }
                         } catch {
@@ -315,26 +314,26 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         
         do {
-            // 1. 解码Base64加密会话密钥和nonce
+            // 1. Decode Base64 encrypted session key and nonce
             guard let encryptedSessionKeyData = Data(base64Encoded: ipAssignPacket.encryptedSessionKey),
                   let keyNonceData = Data(base64Encoded: ipAssignPacket.keyNonce) else {
-                throw NSError(domain: "com.aeronyx.AeroNyx", code: 1008, userInfo: [NSLocalizedDescriptionKey: "Invalid session key format"]])
+                throw NSError(domain: "com.aeronyx.AeroNyx", code: 1008, userInfo: [NSLocalizedDescriptionKey: "Invalid session key format"])
             }
             
-            // 2. 派生共享密钥
+            // 2. Derive shared key
             let sharedSecret = try crypto.deriveSharedSecret(serverPublicKey: serverPublicKey)
             
-            // 3. 解密会话密钥
+            // 3. Decrypt session key
             self.sessionKey = try crypto.decryptSessionKey(
                 encryptedKey: encryptedSessionKeyData,
                 nonce: keyNonceData,
                 sharedSecret: sharedSecret
             )
             
-            // 保存会话ID
+            // Save session ID
             self.sessionId = ipAssignPacket.sessionId
             
-            // 4. 配置隧道网络设置
+            // 4. Configure tunnel network settings
             let settings = createTunnelSettings(ipAssign: ipAssignPacket)
             
             setTunnelNetworkSettings(settings) { error in
@@ -344,11 +343,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     return
                 }
                 
-                // 握手成功完成
+                // Handshake completed successfully
                 os_log("Handshake completed successfully, tunnel configured", log: self.log, type: .info)
                 completion(nil)
                 
-                // 开始监听服务器数据包
+                // Start listening for server packets
                 self.startReceivingPackets()
             }
         } catch {
@@ -358,117 +357,117 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     }
     
     private func createTunnelSettings(ipAssign: IpAssignPacket) -> NEPacketTunnelNetworkSettings {
-        // 使用服务器提供的信息配置隧道
-        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "your-vpn-server.com") // 实际VPN服务器地址
-        
-        // 配置IPv4
-        settings.ipv4Settings = NEIPv4Settings(
-            addresses: [ipAssign.ipAddress],
-            subnetMasks: [ipAssign.subnetMask]
-        )
-        
-        if ipAssign.gateway.isEmpty == false {
-            settings.ipv4Settings?.includedRoutes = [NEIPv4Route.default()]
-            settings.ipv4Settings?.excludedRoutes = [] // 可选，根据服务器配置添加
-        }
-        
-        // 配置DNS
-        if !ipAssign.dns.isEmpty {
-            settings.dnsSettings = NEDNSSettings(servers: ipAssign.dns)
-        }
-        
-        return settings
-    }
-    
-    // MARK: - 数据包处理
-    
-    private func startPacketForwarding() {
-        guard !isProcessingPackets else { return }
-        isProcessingPackets = true
-        
-        // 启动数据包转发循环
-        readPackets()
-    }
-    
-    private func readPackets() {
-        // 从TUN接口读取数据包
-        packetFlow.readPackets { [weak self] packets, protocols in
-            guard let self = self, self.isProcessingPackets else { return }
+            // Configure tunnel with server-provided information
+            let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "your-vpn-server.com") // Actual VPN server address
             
-            self.socketQueue.async {
-                self.processAndSendPackets(packets, protocols: protocols)
-                // 继续读取更多数据包
-                self.readPackets()
-            }
-        }
-    }
-    
-    private func startReceivingPackets() {
-        receiveWebSocketMessage { [weak self] result in
-            guard let self = self else { return }
+            // Configure IPv4
+            settings.ipv4Settings = NEIPv4Settings(
+                addresses: [ipAssign.ipAddress],
+                subnetMasks: [ipAssign.subnetMask]
+            )
             
-            switch result {
-            case .success(let message):
-                self.handleWebSocketMessage(message)
-                // 继续接收
-                self.startReceivingPackets()
-            case .failure(let error):
-                os_log("WebSocket receive error: %{public}@", log: self.log, type: .error, error.localizedDescription)
-                self.handleConnectionError(error)
+            if !ipAssign.gateway.isEmpty {
+                settings.ipv4Settings?.includedRoutes = [NEIPv4Route.default()]
+                settings.ipv4Settings?.excludedRoutes = [] // Optional, add based on server config
             }
-        }
-    }
-    
-    private func handleWebSocketMessage(_ message: URLSessionWebSocketTask.Message) {
-        switch message {
-        case .data(let data):
-            handleWebSocketData(data)
-        case .string(let string):
-            if let data = string.data(using: .utf8) {
-                handleWebSocketData(data)
-            } else {
-                os_log("Received string cannot be converted to data", log: log, type: .error)
-            }
-        @unknown default:
-            os_log("Unknown WebSocket message type", log: log, type: .error)
-        }
-    }
-    
-    private func handleWebSocketData(_ data: Data) {
-        do {
-            // 解析为基础数据包以获取类型
-            let decoder = JSONDecoder()
-            let basePacket = try decoder.decode(BasePacket.self, from: data)
             
-            switch basePacket.type {
-            case .data:
-                // 解析为数据包
-                let dataPacket = try decoder.decode(DataPacket.self, from: data)
-                handleDataPacket(dataPacket)
-            case .ping:
-                // 回应Ping
-                sendJsonPacket(BasePacket(type: .pong)) { error in
-                    if let error = error {
-                        self.log.error("Failed to send Pong: %{public}@", error.localizedDescription)
-                    }
+            // Configure DNS
+            if !ipAssign.dns.isEmpty {
+                settings.dnsSettings = NEDNSSettings(servers: ipAssign.dns)
+            }
+            
+            return settings
+        }
+        
+        // MARK: - Packet Processing
+        
+        private func startPacketForwarding() {
+            guard !isProcessingPackets else { return }
+            isProcessingPackets = true
+            
+            // Start packet forwarding loop
+            readPackets()
+        }
+        
+        private func readPackets() {
+            // Read packets from TUN interface
+            packetFlow.readPackets { [weak self] packets, protocols in
+                guard let self = self, self.isProcessingPackets else { return }
+                
+                self.socketQueue.async {
+                    self.processAndSendPackets(packets, protocols: protocols)
+                    // Continue reading more packets
+                    self.readPackets()
                 }
-            case .error:
-                let errorPacket = try decoder.decode(ErrorPacket.self, from: data)
-                os_log("Received error packet: %{public}@", log: log, type: .error, errorPacket.message)
-            case .disconnect:
-                let disconnectPacket = try decoder.decode(DisconnectPacket.self, from: data)
-                os_log("Received disconnect: %{public}@", log: log, type: .info, disconnectPacket.reason)
-                // 重新连接
-                handleConnectionError(NSError(domain: "com.aeronyx.AeroNyx", code: 1009, userInfo: [NSLocalizedDescriptionKey: "Server initiated disconnect: \(disconnectPacket.reason)"]))
-            default:
-                os_log("Unexpected packet type: %{public}@", log: log, type: .error, basePacket.type.rawValue)
             }
-        } catch {
-            os_log("Failed to parse packet: %{public}@", log: log, type: .error, error.localizedDescription)
         }
-    }
-    
-    private func handleDataPacket(_ dataPacket: DataPacket) {
+        
+        private func startReceivingPackets() {
+            receiveWebSocketMessage { [weak self] result in
+                guard let self = self else { return }
+                
+                switch result {
+                case .success(let message):
+                    self.handleWebSocketMessage(message)
+                    // Continue receiving
+                    self.startReceivingPackets()
+                case .failure(let error):
+                    os_log("WebSocket receive error: %{public}@", log: self.log, type: .error, error.localizedDescription)
+                    self.handleConnectionError(error)
+                }
+            }
+        }
+        
+        private func handleWebSocketMessage(_ message: URLSessionWebSocketTask.Message) {
+            switch message {
+            case .data(let data):
+                handleWebSocketData(data)
+            case .string(let string):
+                if let data = string.data(using: .utf8) {
+                    handleWebSocketData(data)
+                } else {
+                    os_log("Received string cannot be converted to data", log: log, type: .error)
+                }
+            @unknown default:
+                os_log("Unknown WebSocket message type", log: log, type: .error)
+            }
+        }
+        
+        private func handleWebSocketData(_ data: Data) {
+            do {
+                // Parse as base packet to get type
+                let decoder = JSONDecoder()
+                let basePacket = try decoder.decode(BasePacket.self, from: data)
+                
+                switch basePacket.type {
+                case .data:
+                    // Parse as data packet
+                    let dataPacket = try decoder.decode(DataPacket.self, from: data)
+                    handleDataPacket(dataPacket)
+                case .ping:
+                    // Respond to Ping
+                    sendJsonPacket(BasePacket(type: .pong)) { error in
+                        if let error = error {
+                            os_log("Failed to send Pong: %{public}@", log: self.log, type: .error, error.localizedDescription)
+                        }
+                    }
+                case .error:
+                    let errorPacket = try decoder.decode(ErrorPacket.self, from: data)
+                    os_log("Received error packet: %{public}@", log: log, type: .error, errorPacket.message)
+                case .disconnect:
+                    let disconnectPacket = try decoder.decode(DisconnectPacket.self, from: data)
+                    os_log("Received disconnect: %{public}@", log: log, type: .info, disconnectPacket.reason)
+                    // Reconnect
+                    handleConnectionError(NSError(domain: "com.aeronyx.AeroNyx", code: 1009, userInfo: [NSLocalizedDescriptionKey: "Server initiated disconnect: \(disconnectPacket.reason)"]))
+                default:
+                    os_log("Unexpected packet type: %{public}@", log: log, type: .error, basePacket.type.rawValue)
+                }
+            } catch {
+                os_log("Failed to parse packet: %{public}@", log: log, type: .error, error.localizedDescription)
+            }
+        }
+        
+        private func handleDataPacket(_ dataPacket: DataPacket) {
             guard let sessionKey = self.sessionKey,
                   let crypto = self.cryptoManager else {
                 os_log("Cannot process packet: missing session key or crypto manager", log: log, type: .error)
@@ -476,16 +475,16 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
             
             do {
-                // 解码Base64数据
+                // Decode Base64 data
                 guard let encryptedData = Data(base64Encoded: dataPacket.encrypted),
                       let nonceData = Data(base64Encoded: dataPacket.nonce) else {
-                    throw NSError(domain: "com.aeronyx.AeroNyx", code: 1010, userInfo: [NSLocalizedDescriptionKey: "Invalid packet encoding"]])
+                    throw NSError(domain: "com.aeronyx.AeroNyx", code: 1010, userInfo: [NSLocalizedDescriptionKey: "Invalid packet encoding"])
                 }
                 
-                // 解密数据包
+                // Decrypt packet
                 let decryptedData = try crypto.decryptPacket(encryptedData, nonce: nonceData, with: sessionKey)
                 
-                // 写入TUN接口
+                // Write to TUN interface
                 self.packetFlow.writePackets([decryptedData], withProtocols: [NSNumber(value: AF_INET)])
             } catch {
                 os_log("Failed to decrypt packet: %{public}@", log: log, type: .error, error.localizedDescription)
@@ -502,17 +501,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             
             for (i, packet) in packets.enumerated() {
                 do {
-                    // 加密数据包
+                    // Encrypt packet
                     let (encrypted, nonce) = try crypto.encryptPacket(packet, with: sessionKey)
                     
-                    // 构造DataPacket结构
+                    // Construct DataPacket structure
                     let dataPacket = DataPacket(
                         encrypted: encrypted.base64EncodedString(),
                         nonce: nonce.base64EncodedString(),
                         counter: OSAtomicIncrement64(&packetCounter)
                     )
                     
-                    // 序列化并发送
+                    // Serialize and send
                     sendJsonPacket(dataPacket) { error in
                         if let error = error {
                             os_log("Failed to send encrypted packet: %{public}@", log: self.log, type: .error, error.localizedDescription)
@@ -524,7 +523,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             }
         }
         
-        // MARK: - WebSocket 辅助方法
+        // MARK: - WebSocket Helper Methods
         
         private func receiveWebSocketMessage(completion: @escaping (Result<URLSessionWebSocketTask.Message, Error>) -> Void) {
             webSocketTask?.receive(completionHandler: { result in
@@ -577,45 +576,45 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         private func handleConnectionError(_ error: Error) {
             os_log("Connection error, attempting to reconnect: %{public}@", log: log, type: .error, error.localizedDescription)
             
-            // 关闭当前WebSocket
+            // Close current WebSocket
             webSocketTask?.cancel()
             webSocketTask = nil
             
-            // 检查重连次数
+            // Check reconnection count
             if reconnectAttempts >= maxReconnectAttempts {
                 os_log("Maximum reconnection attempts reached (%d). Giving up.", log: log, type: .error, maxReconnectAttempts)
-                // 清理资源
+                // Clean up resources
                 cleanupResources()
                 return
             }
             
             reconnectAttempts += 1
             
-            // 等待延迟后重新连接
-            let delay = Double(min(30, pow(2.0, Double(reconnectAttempts)))) // 指数退避
+            // Wait with delay before reconnecting
+            let delay = Double(min(30, pow(2.0, Double(reconnectAttempts)))) // Exponential backoff
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self = self else { return }
                 
-                // 重置部分状态
+                // Reset partial state
                 self.sessionKey = nil
                 self.serverPublicKey = nil
                 self.packetCounter = 0
                 
-                // 重新开始握手
+                // Restart handshake
                 self.startServerHandshake { error in
                     if let error = error {
                         os_log("Reconnection failed: %{public}@", log: self.log, type: .error, error.localizedDescription)
-                        self.handleConnectionError(error) // 递归重试
+                        self.handleConnectionError(error) // Recursive retry
                     } else {
                         os_log("Reconnection successful", log: self.log, type: .info)
-                        self.reconnectAttempts = 0 // 重置重连计数
+                        self.reconnectAttempts = 0 // Reset reconnection counter
                         self.startPacketForwarding()
                     }
                 }
             }
         }
         
-        // MARK: - 应用交互
+        // MARK: - App Interaction
         
         override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)?) {
             do {
@@ -627,11 +626,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 
                 switch type {
                 case "status":
-                    // 返回VPN状态
+                    // Return VPN status
                     let status: [String: Any] = [
                         "connected": (sessionKey != nil),
                         "sessionId": sessionId ?? "",
-                        "assignedIp": getAssignedIp() ?? "未分配"
+                        "assignedIp": getAssignedIp() ?? "Not Assigned"
                     ]
                     
                     if let responseData = try? JSONSerialization.data(withJSONObject: status, options: []) {
@@ -641,13 +640,13 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     }
                     
                 case "disconnect":
-                    // 手动断开连接
+                    // Manually disconnect
                     stopTunnel(with: .userInitiated) {
                         completionHandler?(nil)
                     }
                     
                 case "ping":
-                    // 发送Ping到服务器
+                    // Send Ping to server
                     sendJsonPacket(BasePacket(type: .ping)) { error in
                         var response: [String: Any] = ["success": error == nil]
                         if let error = error {
