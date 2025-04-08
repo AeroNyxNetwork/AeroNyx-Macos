@@ -1,14 +1,14 @@
 import Foundation
 import CryptoKit
 import os.log
-import AeronyxCryptoModule
+import AeronyxCrypto // Direct import of the C module instead of using dlopen/dlsym
 
 // --- Error Enum ---
 enum AeronyxCryptoError: Error, LocalizedError {
     case rustError(code: Int32, message: String = "See Rust logs for details")
     case nullPointerReturned
     case invalidInputLength(String)
-    case conversionFailed(String) // 添加关联值
+    case conversionFailed(String)
     case signFailed
     case verifyFailed
     case ecdhFailed
@@ -18,21 +18,17 @@ enum AeronyxCryptoError: Error, LocalizedError {
     case keypairNotFound
     case invalidKeyFormat
     
-    // 添加内部错误类型，替代原来未定义的rustInternalError
-    static func rustInternalError(_ message: String) -> AeronyxCryptoError {
-        return .rustError(code: -999, message: message)
-    }
-
-    // Helper to create error from Rust return code
+    // Helper to create error from Rust return code with improved granularity
     static func from(code: Int32, operation: String) -> AeronyxCryptoError? {
         guard code != 0 else { return nil } // 0 means success, no error
 
         let message = "Rust operation '\(operation)' failed with code \(code)."
         switch code {
-        case -1: return .rustError(code: code, message: "\(message) Likely null pointer input.")
-        case -2: return .invalidInputLength("\(message) Invalid input length.")
-        case -3: return .conversionFailed("\(message) Key conversion failed.")
+        case -1: return .nullPointerReturned
+        case -2: return .invalidInputLength("Invalid input length in \(operation)")
+        case -3: return .conversionFailed("Key conversion failed in \(operation)")
         case -4: return .signFailed
+        case -5: return .rustError(code: code, message: "Memory error in \(operation)")
         case -8: return .decryptionFailed
         default: return .rustError(code: code, message: message)
         }
@@ -41,9 +37,9 @@ enum AeronyxCryptoError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .rustError(let code, let message): return "Rust Error (code \(code)): \(message)"
-        case .nullPointerReturned: return "Rust FFI returned a null pointer unexpectedly."
+        case .nullPointerReturned: return "Null pointer error in FFI call"
         case .invalidInputLength(let details): return "Invalid Input Length: \(details)"
-        case .conversionFailed(let details): return "Key Conversion Failed: \(details)" // 更新以使用关联值
+        case .conversionFailed(let details): return "Key Conversion Failed: \(details)"
         case .signFailed: return "Signing Operation Failed"
         case .verifyFailed: return "Verification Failed"
         case .ecdhFailed: return "ECDH Key Agreement Failed"
@@ -165,7 +161,7 @@ class AeronyxCrypto {
         let signatureData = try processOutParamBuffer(outputBufferPtr, freeFunc: aeronyx_free_buffer, operationName: "signEd25519")
         guard signatureData.count == 64 else {
              // Freeing already happened in processOutParamBuffer if needed
-             throw AeronyxCryptoError.rustInternalError("Signing returned unexpected length: \(signatureData.count)")
+             throw AeronyxCryptoError.rustError(code: 0, message: "Signing returned unexpected length: \(signatureData.count)")
         }
         return signatureData
     }
@@ -247,8 +243,8 @@ class AeronyxCrypto {
          let nonceData = try processOutParamBuffer(nonceOutBufferPtr, freeFunc: aeronyx_free_buffer, operationName: "encryptChaCha20Poly1305_nonce")
 
           // Basic validation
-          guard nonceData.count == 12 else { throw AeronyxCryptoError.rustInternalError("Encryption returned invalid nonce length") }
-          guard ciphertextData.count >= 16 else { throw AeronyxCryptoError.rustInternalError("Encryption returned invalid ciphertext length") }
+          guard nonceData.count == 12 else { throw AeronyxCryptoError.rustError(code: 0, message: "Encryption returned invalid nonce length") }
+          guard ciphertextData.count >= 16 else { throw AeronyxCryptoError.rustError(code: 0, message: "Encryption returned invalid ciphertext length") }
 
          return (ciphertextData, nonceData)
     }
@@ -347,7 +343,7 @@ class AeronyxCrypto {
          let derivedData = try processOutParamBuffer(outputBufferPtr, freeFunc: aeronyx_free_buffer, operationName: "deriveKey (HKDF)")
           // Check length again just in case
           guard derivedData.count == outputLength else {
-               throw AeronyxCryptoError.rustInternalError("HKDF returned unexpected key length: \(derivedData.count), expected \(outputLength)")
+               throw AeronyxCryptoError.rustError(code: 0, message: "HKDF returned unexpected key length: \(derivedData.count), expected \(outputLength)")
           }
           return derivedData
     }
@@ -380,7 +376,7 @@ class AeronyxCrypto {
 
     // --- Test Library Loading ---
     static func testLibraryLoading() -> String {
-        // 尝试进行一个简单的调用来测试库是否正常加载
+        // Try a simple call to test if the library is loaded correctly
         do {
             let testData = Data([1, 2, 3, 4])
             let key = Data(repeating: 0, count: 32)
