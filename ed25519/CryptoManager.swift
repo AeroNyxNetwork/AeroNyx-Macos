@@ -6,36 +6,36 @@ class CryptoManager {
     private let log = OSLog(subsystem: "com.aeronyx.AeroNyx", category: "Crypto")
     private let keychain = KeychainManager()
     
-    // MARK: - 密钥对常量
+    // MARK: - Keypair Constants
     
     private struct KeychainKeys {
         static let privateKey = "AeroNyx.solana.keypair.private"
         static let publicKey = "AeroNyx.solana.keypair.public"
     }
     
-    // MARK: - 初始化
+    // MARK: - Initialization
     
     init() {
         os_log("Initializing crypto manager", log: log, type: .debug)
     }
     
-    // MARK: - 密钥对操作
+    // MARK: - Keypair Operations
     
-    /// 生成新的Solana密钥对(Ed25519)并保存到Keychain
+    /// Generate a new Solana keypair (Ed25519) and save to Keychain
     func generateNewKeypair() throws -> (privateKey: Data, publicKey: Data, publicKeyString: String) {
-        // 创建一个新的Ed25519密钥对
+        // Create a new Ed25519 keypair
         let privateKey = Curve25519.Signing.PrivateKey()
         let publicKey = privateKey.publicKey
         
-        // 获取密钥组件数据
+        // Get key component data
         let privateKeyData = privateKey.rawRepresentation
         let publicKeyData = publicKey.rawRepresentation
         
-        // 转换为字符串格式
+        // Convert to string format
         let privateKeyHex = privateKeyData.hexString
         let publicKeyBase58 = publicKeyData.base58EncodedString
         
-        // 保存到keychain
+        // Save to keychain
         try keychain.saveToKeychain(key: KeychainKeys.privateKey, value: privateKeyHex)
         try keychain.saveToKeychain(key: KeychainKeys.publicKey, value: publicKeyBase58)
         
@@ -44,7 +44,7 @@ class CryptoManager {
         return (privateKeyData, publicKeyData, publicKeyBase58)
     }
     
-    /// 从Keychain加载密钥对
+    /// Load keypair from Keychain
     func loadKeypair() throws -> (privateKey: Data, publicKey: Data, publicKeyString: String) {
         guard let privateKeyHex = keychain.loadFromKeychain(key: KeychainKeys.privateKey),
               let publicKeyBase58 = keychain.loadFromKeychain(key: KeychainKeys.publicKey) else {
@@ -55,7 +55,7 @@ class CryptoManager {
             throw CryptoError.invalidKeyFormat
         }
         
-        // 从私钥重新生成公钥(更安全的做法)
+        // Regenerate public key from private key (more secure approach)
         let privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData)
         let publicKey = privateKey.publicKey
         let publicKeyData = publicKey.rawRepresentation
@@ -63,15 +63,15 @@ class CryptoManager {
         return (privateKeyData, publicKeyData, publicKeyBase58)
     }
     
-    /// 从字符串导入密钥对(支持十六进制或Base58格式)
+    /// Import keypair from string (supports hex or Base58 format)
     func importKeypair(from privateKeyString: String) throws {
         var privateKeyData: Data
         
-        // 尝试解析为十六进制
+        // Try to parse as hex
         if let data = Data(hexString: privateKeyString) {
             privateKeyData = data
         }
-        // 尝试解析为Base58
+        // Try to parse as Base58
         else if let data = Data(base58Encoded: privateKeyString) {
             privateKeyData = data
         }
@@ -79,75 +79,82 @@ class CryptoManager {
             throw CryptoError.invalidKeyFormat
         }
         
-        // 验证私钥并生成公钥
+        // Verify private key and generate public key
         let privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: privateKeyData)
         let publicKey = privateKey.publicKey
         let publicKeyData = publicKey.rawRepresentation
         
-        // 保存到keychain
+        // Save to keychain
         try keychain.saveToKeychain(key: KeychainKeys.privateKey, value: privateKeyData.hexString)
         try keychain.saveToKeychain(key: KeychainKeys.publicKey, value: publicKeyData.base58EncodedString)
         
         os_log("Imported Ed25519 keypair", log: log, type: .info)
     }
     
-    /// 检查是否有可用的密钥对
+    /// Check if keypair is available
     func isKeypairAvailable() -> Bool {
         return keychain.loadFromKeychain(key: KeychainKeys.privateKey) != nil &&
                keychain.loadFromKeychain(key: KeychainKeys.publicKey) != nil
     }
     
-    // MARK: - 加密操作
+    // MARK: - Encryption Operations
     
-    /// 使用Ed25519私钥对挑战进行签名
+    /// Sign a challenge with Ed25519 private key
     func sign(challenge: Data) throws -> String {
         let keypair = try loadKeypair()
         
         do {
-            // 使用Rust实现进行签名
-            let signature = try AeronyxCrypto.signEd25519(
-                privateKey: keypair.privateKey,
-                message: challenge
-            )
+            // Use native implementation for signing
+            let privateKey = try Curve25519.Signing.PrivateKey(rawRepresentation: keypair.privateKey)
+            let signature = try privateKey.signature(for: challenge)
             
-            // Base58编码签名用于服务器
-            return signature.base58EncodedString
+            // Base58 encode signature for server - fix this line
+            return Data(signature).base58EncodedString
         } catch {
             os_log("Signing failed: %{public}@", log: log, type: .error, error.localizedDescription)
             throw CryptoError.signFailed
         }
     }
     
-    /// 从Ed25519密钥对和服务器公钥导出共享密钥
+    /// Derive shared key from Ed25519 keypair and server public key
     func deriveSharedSecret(serverPublicKey: Data) throws -> Data {
         let keypair = try loadKeypair()
         
         do {
-            // 完整的密钥派生流程
-            let sharedSecret = try AeronyxCrypto.deriveSharedSecretAndKey(
-                privateKeyEd: keypair.privateKey,
-                serverPublicKeyEd: serverPublicKey
+            // Use CryptoKit for ECDH
+            let privateKey = try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: keypair.privateKey)
+            let publicKey = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: serverPublicKey)
+            
+            let sharedSecret = try privateKey.sharedSecretFromKeyAgreement(with: publicKey)
+            
+            // Derive key using HKDF
+            let symmetricKey = sharedSecret.hkdfDerivedSymmetricKey(
+                using: SHA256.self,
+                salt: Data(),
+                sharedInfo: "AERONYX-VPN-KEY".data(using: .utf8)!,
+                outputByteCount: 32
             )
             
-            return sharedSecret
+            // Get raw key data
+            return symmetricKey.withUnsafeBytes { Data($0) }
         } catch {
             os_log("Shared secret derivation failed: %{public}@", log: log, type: .error, error.localizedDescription)
-            throw CryptoError.conversionFailed
+            throw CryptoError.conversionFailed(error.localizedDescription)
         }
     }
     
-    // MARK: - 会话密钥操作
+    // MARK: - Session Key Operations
     
-    /// 使用共享密钥解密会话密钥
+    /// Decrypt session key using shared secret
     func decryptSessionKey(encryptedKey: Data, nonce: Data, sharedSecret: Data) throws -> Data {
         do {
-            // 使用Rust库的ChaCha20Poly1305解密
-            let decrypted = try AeronyxCrypto.decryptChaCha20Poly1305(
-                ciphertext: encryptedKey,
-                key: sharedSecret,
-                nonce: nonce
-            )
+            // Use CryptoKit for ChaCha20Poly1305 decryption
+            let key = SymmetricKey(data: sharedSecret)
+            let sealedBox = try ChaChaPoly.SealedBox(nonce: ChaChaPoly.Nonce(data: nonce),
+                                                   ciphertext: encryptedKey.dropLast(16),
+                                                   tag: encryptedKey.suffix(16))
             
+            let decrypted = try ChaChaPoly.open(sealedBox, using: key)
             return decrypted
         } catch {
             os_log("Session key decryption failed: %{public}@", log: log, type: .error, error.localizedDescription)
@@ -155,34 +162,39 @@ class CryptoManager {
         }
     }
     
-    // MARK: - 数据包加密/解密
+    // MARK: - Packet Encryption/Decryption
     
-    /// 使用会话密钥加密数据包
+    /// Encrypt packet with session key
     func encryptPacket(_ packet: Data, with sessionKey: Data) throws -> (encrypted: Data, nonce: Data) {
         do {
-            // 使用Rust库进行ChaCha20Poly1305加密
-            let (ciphertext, nonce) = try AeronyxCrypto.encryptChaCha20Poly1305(
-                data: packet,
-                key: sessionKey
-            )
+            // Use CryptoKit for ChaCha20Poly1305 encryption
+            let key = SymmetricKey(data: sessionKey)
+            let nonce = ChaChaPoly.Nonce()
+            let sealedBox = try ChaChaPoly.seal(packet, using: key, nonce: nonce)
             
-            return (ciphertext, nonce)
+            // Combine nonce, ciphertext, and tag
+            var encrypted = Data()
+            encrypted.append(sealedBox.ciphertext)
+            encrypted.append(sealedBox.tag)
+            
+            return (encrypted, nonce.withUnsafeBytes { Data($0) })
         } catch {
             os_log("Packet encryption failed: %{public}@", log: log, type: .error, error.localizedDescription)
             throw CryptoError.encryptionFailed
         }
     }
     
-    /// 使用会话密钥解密数据包
+    /// Decrypt packet with session key
     func decryptPacket(_ encrypted: Data, nonce: Data, with sessionKey: Data) throws -> Data {
         do {
-            // 使用Rust库进行ChaCha20Poly1305解密
-            let decrypted = try AeronyxCrypto.decryptChaCha20Poly1305(
-                ciphertext: encrypted,
-                key: sessionKey,
-                nonce: nonce
-            )
+            // Use CryptoKit for ChaCha20Poly1305 decryption
+            let key = SymmetricKey(data: sessionKey)
+            let nonceObj = try ChaChaPoly.Nonce(data: nonce)
+            let sealedBox = try ChaChaPoly.SealedBox(nonce: nonceObj,
+                                                   ciphertext: encrypted.dropLast(16),
+                                                   tag: encrypted.suffix(16))
             
+            let decrypted = try ChaChaPoly.open(sealedBox, using: key)
             return decrypted
         } catch {
             os_log("Packet decryption failed: %{public}@", log: log, type: .error, error.localizedDescription)
@@ -191,7 +203,7 @@ class CryptoManager {
     }
 }
 
-// MARK: - 错误类型
+// MARK: - Error Types
 
 enum CryptoError: Error, LocalizedError {
     case keypairNotFound
@@ -204,17 +216,17 @@ enum CryptoError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .keypairNotFound:
-            return "密钥对未找到"
+            return "Keypair not found"
         case .invalidKeyFormat:
-            return "无效的密钥格式"
+            return "Invalid key format"
         case .encryptionFailed:
-            return "加密失败"
+            return "Encryption failed"
         case .decryptionFailed:
-            return "解密或验证失败"
+            return "Decryption or verification failed"
         case .signFailed:
-            return "签名操作失败"
+            return "Signing operation failed"
         case .conversionFailed(let details):
-            return "密钥转换失败: \(details)"
+            return "Key conversion failed: \(details)"
         }
     }
 }
