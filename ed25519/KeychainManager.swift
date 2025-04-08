@@ -11,43 +11,43 @@ class KeychainManager {
         case invalidData
     }
     
-    /// 将字符串保存到Keychain
+    /// Save string to Keychain
     func saveToKeychain(key: String, value: String) throws {
         guard let data = value.data(using: .utf8) else {
             throw KeychainError.invalidData
         }
         
-        // 查询条件
+        // Query parameters
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
             kSecAttrService as String: "com.aeronyx.AeroNyx"
         ]
         
-        // 先尝试删除旧值
+        // Try to delete old value first
         SecItemDelete(query as CFDictionary)
         
-        // 添加属性
+        // Add attributes
         var addQuery = query
         addQuery[kSecValueData as String] = data
         
-        // 添加访问控制
+        // Add access control
         #if os(iOS)
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         #else
         addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
         #endif
         
-        // 添加新项
+        // Add new item
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else {
             throw KeychainError.saveFailure(status)
         }
     }
     
-    /// 从Keychain读取字符串
+    /// Read string from Keychain
     func loadFromKeychain(key: String) -> String? {
-        // 查询条件
+        // Query parameters
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrAccount as String: key,
@@ -71,7 +71,7 @@ class KeychainManager {
         return value
     }
     
-    /// 从Keychain删除项
+    /// Remove item from Keychain
     func removeFromKeychain(key: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
