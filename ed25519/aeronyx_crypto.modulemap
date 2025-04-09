@@ -1,5 +1,5 @@
-
-module AeronyxCrypto {
+module AeronyxCryptoModule {
     header "AeronyxCrypto.h"
+    link "aeronyx_crypto"
     export *
 }
